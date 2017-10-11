@@ -1,0 +1,509 @@
+#:kivy 1.1
+#set: programname "FastReader"
+#set: default_reg_font_shrink 14
+#set: default_scratchpad_text "Welcome to FastReader.\nI hope you enjoy it.\nIf you are new to this kind of speed-reading, try starting at a slow speed until you feel comfortable... This particular message is from the ScratchPad. In the ScratchPad, you can paste text and send it straight to the reader.\nThe ScratchPad and all other resources are available from the dropdown menu. To reach the dropdown menu, click on the upper right corner of this screen while in reading mode."
+
+
+
+<FRScreenManager>:
+	fontsize_reg: '%ssp' % (self.width /9,)
+	fontsize_small: '%ssp' % (self.width /12)
+	menu_button_height: root.height / 6 if root.height > 150 else root.height/3
+	menu_button_width: root.width / 6 if root.width > 150 else root.width/3
+	row_height: root.height / 8 if root.height > 150 else root.height / 4
+	FastReaderScreen:
+		name: "reader"
+	SettingsScreen:
+		name: "settings"
+	OpenFileScreen:
+		name: "openfile"
+	ScratchpadScreen:
+		name: "scratchpad"
+	HelpScreen:
+		name: "help"
+	AboutScreen:
+		name: "about"
+
+
+<FastReaderScreen>:
+	size_hint: 1, 1
+	fontsize_reg: self.manager.fontsize_reg
+	menu_button_height: self.manager.menu_button_height
+	menu_button_width: self.manager.menu_button_width
+	#on_parent: menupanel.dismiss()
+	isready: False
+	isplaying: False
+	#on_pre_enter: self._finish_init()
+	FloatLayout:
+		size: root.size
+		#
+		# # button to open the menu panel
+		Button:
+			id: btn_menuopen
+			on_release: root.ids.menupanel.open(self)
+			#on_release: print repr(root.ids)
+			background_color: [0,0,0,0]
+			size_hint: 0.2, 0.2
+			pos_hint: {"top": 1, "right": 1}
+			#anchor_x: 'right'
+			#anchor_y: 'top'
+			opacity: 0.5
+			Image:
+				center_x: self.parent.center_x
+				center_y: self.parent.center_y
+				source: "./openpanel.png"
+				size: self.parent.size
+				#size_hint: 1, 1
+
+		# # dropdown menu panel
+		DropDown:
+			id: menupanel
+			#on_parent: self.dismiss()
+			#on_release: lambda: None
+			on_select: root.select_menu_item(*args)
+			Button:
+				id: btn_bookmark
+				size_hint_y: None
+				#height: 30
+				height: root.menu_button_height
+				width: root.menu_button_width
+				on_release: menupanel.select('bookmark')
+				Image:
+					center_x: self.parent.center_x
+					center_y: self.parent.center_y
+					source: "./bookmarks_list_add.png"
+					size: self.parent.size
+					size_hint: 1, 1
+			Button:
+				id: btn_fileopen
+				size_hint_y: None
+				height: root.menu_button_height
+				width: root.menu_button_width
+				on_release: menupanel.select('openfile')
+				Image:
+					center_x: self.parent.center_x
+					center_y: self.parent.center_y
+					source: "./openfile.png"
+					size: self.parent.size
+					size_hint: 1, 1
+			Button: 
+				id: settings
+				size_hint_y: None
+				height: root.menu_button_height
+				width: root.menu_button_width
+				on_release: menupanel.select('settings')
+				Image:
+					center: self.parent.center
+					source: "./settings.png"
+					size: self.parent.size
+					size_hint: 1, 1
+			Button:
+				id: scratchpad
+				size_hint_y: None
+				height: root.menu_button_height
+				width: root.menu_button_width
+				on_release: menupanel.select('scratchpad')
+				Image:
+					center_x: self.parent.center_x
+					center_y: self.parent.center_y
+					source: "./scratchpad.png"
+					size: self.parent.size
+					size_hint: 1, 1
+			Button:
+				id: help
+				size_hint_y: None
+				height: root.menu_button_height
+				width: root.menu_button_width
+				on_release: menupanel.select('help')
+				Image:
+					center: self.parent.center
+					source: "./help.png"
+					size: self.parent.size
+					size_hint: 1, 1
+			Button:
+				id: about
+				size_hint_y: None
+				height: root.menu_button_height
+				width: root.menu_button_width
+				on_release: menupanel.select('about')
+				Image:
+					center: self.parent.center
+					source: "./fastreader.png"
+					size: self.parent.size
+					size_hint: 1, 1
+
+		# # main window
+		BoxLayout:
+			id: mainlayout
+			orientation: "vertical"
+			size: root.size
+			pos: root.pos
+			## word pane
+			Label:
+				id: text
+				font_size: "%ssp" % (self.width /8,)
+				text_size: None,None
+				text: "[color=#333333][b]Waiting...[/b][/color]"
+				size_hint: 1, 0.8
+				markup: True
+			## progress bar / slider combo
+			## only one should be visible at a time
+			Slider:
+				id: progslider
+				size_hint: 1, 0.1
+				value_track: True
+				value_track_color: [0.5,0,0,0.5]
+				min: 0
+				max: 100
+				value: 0
+				disabled: True
+			ProgressBar:
+				id: progbar
+				size_hint: 1, 0.1
+				value_track: True
+				value_track_color: [0.5,0,0,0.5]
+				min: 0
+				max: 100
+				value: 0
+			## speed button pane
+			BoxLayout:
+				size_hint: 1, 0.3
+				orientation: "horizontal"
+	
+				## slower
+				Button:
+					id: btn_slower
+					on_press: root.go_slower()
+					Image:
+						center: self.parent.center
+						#center_y: self.parent.center_y
+						source: "./slomo.png"
+						size: self.parent.size
+				## pause
+				Button:
+					id: btn_pause
+					on_press: root.go_playpause()
+					Image:
+						id: btn_pause_img
+						center: self.parent.center
+						source: "./play.png"
+						size: self.parent.size
+				## faster
+				Button:
+					id: btn_faster
+					on_press: root.go_faster()
+					Image:
+						center: self.parent.center
+						source: "./ffwd.png"
+						size: self.parent.size
+
+################
+#<SettingsWidget>:
+#	text: 'text'
+#	fontsize_reg: '%ssp' % (self.width / 18, )
+#	orientation: 'horizontal'
+#	# # how can we bind height to row_height of screenmanager?
+#	height: root.height / 8 if root.height > 150 else root.height / 4 
+#	Label:
+#		#width: self.width /2
+#		text: root.text
+#	
+#	
+#
+#<SettingsSlider>:
+#	pass
+#
+#<SettingsCheckbox>:
+#	pass
+#
+#<SettingsSwitch>:
+#	pass
+#
+#<SettingsSpinner>:
+#	pass
+#
+#<SettingsSpinBox>:
+#	pass
+
+
+
+<SettingsScreen>:
+	fontsize_reg: self.manager.fontsize_reg
+	fontsize_small: self.manager.fontsize_small
+	menu_button_height: self.manager.menu_button_height
+	menu_button_width: self.manager.menu_button_width
+	row_height: self.manager.row_height
+	#row_label_width: 
+	FloatLayout:
+		size: root.size
+		pos: root.pos
+		#orientation: "vertical"
+
+		ScrollView:
+			size_hint: None,None
+			size: root.size
+			id: scroller
+			scroll_type: ['content','bars']
+			center_x: root.center_x
+			center_y: root.center_y
+			GridLayout:
+				cols: 2
+				row_default_height: root.row_height * 0.2
+				size_hint: None, None
+				padding: 0
+				spacing: 0
+				width: root.width
+				height: self.minimum_height
+				#
+				Label:
+					size_hint_y: None
+					font_size: root.fontsize_small
+					text: 'Nothing'
+				Switch:
+					height: root.row_height * 0.8
+					width: root.width / 3
+					size_hint_y: None
+					on_active: root.testswitch(self,self.active)
+					active: False
+				#
+				#
+				Label:
+					size_hint_y: None
+					font_size: root.fontsize_small
+					text: 'Nothing'
+				Switch:
+					size_hint_y: None
+					on_active: root.testswitch(self,self.active)
+					active: False
+				#
+				#
+				Label:
+					size_hint_y: None
+					font_size: root.fontsize_reg
+					text: 'Nothing'
+				Switch:
+					size_hint_y: None
+					on_active: root.testswitch(self,self.active)
+					active: False
+				#
+				#
+				Label:
+					size_hint_y: None
+					font_size: root.fontsize_reg
+					text: 'Nothing'
+				Switch:
+					size_hint_y: None
+					on_active: root.testswitch(self,self.active)
+					active: False
+				#
+				#
+				Label:
+					size_hint_y: None
+					font_size: root.fontsize_reg
+					text: 'Nothing'
+				Switch:
+					size_hint_y: None
+					on_active: root.testswitch(self,self.active)
+					active: False
+				#
+				Label:
+					size_hint_y: None
+					### for space on the bottom
+		Button:
+			#center_x: root.center_x
+			center_x: root.center_x
+			pos_hint: {'bottom':1}
+			size_hint: None, None
+			### DISABLE SIZE HINTS!!!!
+			#size_hint: [0.8, 0.25]
+			width: root.width * 0.8
+			height: root.row_height * 0.8
+			font_size: root.fontsize_small
+			text: "Back"
+			on_release: root.manager.current = "reader"					
+
+############################
+
+<OpenFileScreen>:
+	multiselect: True
+	selected: []
+	fontsize_reg: self.manager.fontsize_reg
+	menu_button_height: self.manager.menu_button_height
+	menu_button_width: self.manager.menu_button_width
+	row_height: self.manager.row_height
+	BoxLayout:
+		size: root.size
+		orientation: "vertical"
+		TabbedPanel:
+			height: root.row_height
+			tab_pos: "top_right"
+			default_tab_text: "Icon View"
+			default_tab_content: icon_view_tab
+			
+			TabbedPanelHeader:
+				text: 'List View'
+				content: list_view_tab
+			FileChooserListView:
+				id: list_view_tab
+				multiselect: root.multiselect
+				on_selection: root._set_selection(self.path,self.selection)
+				show_hidden: True
+			FileChooserIconView:
+				id: icon_view_tab
+				multiselect: root.multiselect
+				on_selection:
+					root._set_selection(self.path,self.selection)
+			ToggleButton:
+				height: 
+				text: "Icon"
+				state: "down"
+				group: 'filechooser'
+				on_release: filechooser.view_mode = 'icon'
+				font_size: root.fontsize_reg
+			ToggleButton:
+				text: 'List'
+				group: 'filechooser'
+				on_release: filechooser.view_mode = 'list'
+				font_size: root.fontsize_reg
+		BoxLayout:
+			height: root.row_height
+			orientation: "horizontal"
+			size_hint_y: None
+			Button:
+				font_size: root.fontsize_reg
+				text: "Cancel"
+				on_release: root._cancel()
+			Button:
+				font_size: root.fontsize_reg
+				text: "Load"
+				on_release: root._load()
+
+
+###########################
+
+<ScratchpadScreen>:
+	fontsize_reg: self.manager.fontsize_reg
+	menu_button_height: self.manager.menu_button_height
+	menu_button_width: self.manager.menu_button_width
+	row_height: self.manager.row_height
+	BoxLayout:
+		orientation: "vertical"
+		BoxLayout:
+			orientation: "horizontal"
+			Button:
+				height: root.row_height / 2
+				font_size: root.fontsize_reg
+				text: "Cancel"
+				on_release: root.manager.current = "reader"
+			Button:
+				height: root.row_height / 2
+				font_size: root.fontsize_ret
+				text: "Load"
+				on_release: root.load()
+		TextInput:
+			text: root.sample_text
+			font_size: root.fontsize_reg
+
+###########################
+
+<HelpScreen>:
+	fontsize_reg: self.manager.fontsize_reg
+	menu_button_height: self.manager.menu_button_height
+	menu_button_width: self.manager.menu_button_width
+	row_height: self.manager.row_height
+	BoxLayout:
+		size: root.size
+		orientation: "vertical"
+		Button:
+			text: "Close"
+			on_release: root.manager.current = "reader"
+		Label:
+			text: "help"
+		Button:
+			text: "Close"
+			on_release: root.manager.current = "reader"
+
+####################
+
+<AboutScreen>:
+	fontsize_reg: self.manager.fontsize_reg
+	menu_button_height: self.manager.menu_button_height
+	menu_button_width: self.manager.menu_button_width
+	row_height: self.manager.row_height
+	BoxLayout:
+		size: root.size
+		orientation: "vertical"
+		Button:
+			height: root.row_height
+			font_size: root.fontsize_reg
+			text: "Close"
+			on_release: root.manager.current = "reader"
+		Label:
+			#height: root.row_height
+			font_size: root.fontsize_reg
+			text: "about"
+		Button:
+			height: root.row_height
+			font_size: root.fontsize_reg
+			text: "Close"
+			on_release: root.manager.current = "reader"
+
+
+
+################
+
+<Layout_PopYesNo>:
+	fontsize_reg: '%ssp' % (self.width / 10, )
+	orientation: 'vertical'
+	bla: 'kv'
+
+	ScrollView:
+		id: scroller
+		scroll_type: ['content','bars']
+		size_hint: 1,1
+		Label:
+			size_hint_y: None
+			height: self.texture_size[1]
+			text_size: self.width, None
+			id: message
+			text: 'wtf'
+			font_size: root.fontsize_reg
+
+	BoxLayout:
+		size_hint_y: 0.3
+		orientation: 'horizontal'
+		Button:
+			id: btn_yes
+			text: 'Yes'
+			font_size: root.fontsize_reg
+
+		Button:
+			id: btn_no
+			text: 'No'
+			font_size: root.fontsize_reg
+
+###################
+
+<Layout_PopMessage>:
+	fontsize_reg: '%ssp' % (self.width / 10, )
+	orientation: 'vertical'
+
+	ScrollView:
+		id: scroller
+		scroll_type: ['content','bars']
+		size_hint: 1,1
+		Label:
+			size_hint_y: None
+			height: self.texture_size[1]
+			text_size: self.width, None
+			id: message
+			text: 'wtf'
+			font_size: root.fontsize_reg
+
+	Button:
+		size_hint_y: 0.3
+		id: btn_close
+		text: 'Close'
+		font_size: root.fontsize_reg
+
+
