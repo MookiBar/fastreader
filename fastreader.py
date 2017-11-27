@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 
 
@@ -33,9 +33,11 @@ from kivy.uix.screenmanager import ScreenManager, Screen
 from kivy.uix.tabbedpanel import TabbedPanel
 
 from kivy.utils import escape_markup
+from kivy.utils import get_color_from_hex
+from kivy.utils import get_hex_from_color
 
 from functools import partial
-
+from enum import Enum
 import sys
 import re  # #2
 import os
@@ -50,11 +52,7 @@ kivy_version = kivy.__version__
 ## then set these/relevant vars to the App class,
 ## then instantiate App (app=App()) and set in kv:
 ## <attr>: app.<var>
-img_icon_play = "./play.png"
-img_icon_pause = "./pause.png"
-img_icon_slower = "./slomo.png"
-img_icon_faster = "./ffwd.png"
-config_file = "./fastreader.conf"
+
 
 default_config_json = """
 {
@@ -64,9 +62,41 @@ default_config_json = """
     "font": "", 
     "gbstyle": true, 
     "maxlen": 8, 
-    "speedadjust": 1
+    "speedadjust": 1,
+    "colors": {
+    	"muted": "222222",
+    	"semimuted": "555555",
+    	"quotes": "44aa44",
+    },
 }
 """
+
+class Formats(Enum):
+	PLAINTEXT = 0
+	GUTENBERG = 1
+	HTML = 2
+
+class WordFlags(Enum):
+	FORMAT = 1
+	BOLD = 2
+	ITALICS = 4
+	QUOTES = 8
+	#MUTED = 16
+	#SEMIMUTED = 32
+
+class Encodings(Enum):
+	UTF8 = 1
+	UTF16BE = 2
+	UTF16LE = 3
+	UTF32BE = 4
+	UTF32LE = 5
+	#{
+	#	'\xef\xbb\xbf': 1,
+	#	'\xfe\xff': 2,
+	#	'\xff\xfe': 3,
+	#	'\x00\x00\xfe\xff': 4,
+	#	'\xff\xfe\x00\x00': 5,
+	#}
 
 def version_check(ver, minver):
 	"""returns int:
@@ -95,13 +125,58 @@ def version_check(ver, minver):
 #class FileChooserContainer(BoxLayout):
 #	TabbedPanel:
 
+class Settings(Widget):
+	settings_folder = StringProperty()
+	icon_folder = StringProperty()
+	newline = StringProperty()
+	tabline = StringProperty()
+	maxwordlen = NumericProperty()
+	color_muted = ListProperty()
+	color_semimuted = ListProperty()
+	color_quotes = ListProperty()
+	hex_muted = StringProperty()
+	hex_semimuted = StringProperty()
+	hex_quotes = StringProperty()
+	sleepbase = NumericProperty(0.08)  # #float/double: for normal words, per char
+	sleepab = NumericProperty(0.05)  # #float/double: for abnormal words, per char
+	sleepcapitals = NumericProperty(0.03)  # #float/double: for each capital letter
+	smallwordlen = NumericProperty(4)  # #uint: small words get same fast pace
+	wordlenfactor = NumericProperty(6)  # #? uint
+	img_icon_play = StringProperty()
+	img_icon_pause = StringProperty()
+	img_icon_slower = StringProperty()
+	img_icon_faster = StringProperty()
+	config_file = StringProperty()
+	speed_adjust = StringProperty()
+
+	def __init__(self):
+		super(Settings,self).__init__()
+
+class Book(Widget):
+	"""
+	Holds original words, their modifications and the constructs that contain them.
+	Required args:
+	"""
+	def __init__(self, encoding = Encodings.UTF8):
+		## original words are held in text_array
+		self.text_array = bytearray()
+		self.text_struct_array = bytearray()
+		self.text_struct_str = 'II'
+		self.mod_text_array = bytearray()
+
 
 class Reader(Widget):
 	"""
+	Takes a Book object, passes words to function after delay
 	Required args:
 	@string filename     file with text to load
 	@function callback   should take one arg (string) to update label
 	"""
+	word_struct = 'II'
+	## ( uint_textcharpos, uint_modwordpos )
+	modword_struct = 'IIBId'
+	## ( uint_wordnum, uint_modwordpos, ubyte_wordflags, uint_wordlen, double_wait, )
+
 	percent = NumericProperty()
 	word_position = NumericProperty()
 	start_italics = BooleanProperty()
@@ -115,38 +190,39 @@ class Reader(Widget):
 			self,
 			config,
 			callback,
-			speedadjust=1,
-			maxlen=8,
-			newline=None,
-			tabline=None,
-			gbstyle=True,
+			text_format=Formats.GUTENBERG,
 	):
 		super(Reader, self).__init__()
 		## for gutenberg docs...
 		## translate _i_ and =b= to italics and bold
-		self.gbstyle = gbstyle
+		self.config = config
+		self.text_format = text_format
 		self.callback = callback
-		self.maxlen = maxlen
+		#self.maxlen = maxlen
 		dbg('\n\n\nReader.__init__()\n\n\n')
-		dbg('maxlen: %s (%s)' % (repr(maxlen), str(type(maxlen))))
-		self.newline = newline if newline else '[color=#muted][b]' + '_' * maxlen + '[/b][/color]'
-		self.tabline = tabline if tabline else '[color=#muted][b]_[/b][/color]'
-		self.color_muted = '222222'
+		#dbg('maxlen: %s (%s)' % (repr(maxlen), str(type(maxlen))))
+
+		#self.color_muted = '222222'
 		#self.color_muted = 'muted'
-		self.color_semimuted = '333333'
+		#self.color_semimuted = '333333'
 		#self.color_semimuted = 'semimuted'
-		self.color_quotes = '44ff44'
+		#self.color_quotes = '44ff44'
+		#self.newline = newline if newline else '[color=#%s][b]%s[/b][/color]' % ('_' * maxlen, self.color_muted)
+		#self.tabline = tabline if tabline else '[color=#%s][b]_[/b][/color]'
 		#self.color_quotes = 'quotes'
-		self.sleepbase = 0.08  # #for normal words, per char
-		self.sleepab = 0.05  # #for abnormal words, per char
-		self.sleepcapitals = 0.03  # #for each capital letter
-		self.smallwordlen = 4  # #small words get same fast pace
-		self.wordlenfactor = 6  # #?
+		#self.sleepbase = 0.08  # #for normal words, per char
+		#self.sleepab = 0.05  # #for abnormal words, per char
+		#self.sleepcapitals = 0.03  # #for each capital letter
+		#self.smallwordlen = 4  # #small words get same fast pace
+		#self.wordlenfactor = 6  # #?
 		self.word_position = 0
 		self.modword_position = 0
+		self.reset_items()
 		self.bind(word_position=self.set_percent)
+
+	def reset_items(self):
 		self.char_position = 0  # #
-		self.speedadjust = speedadjust
+		self.speedadjust = self.config.speed_adjust
 		#self.wordlist = []
 		self.word_list = []
 		self.modword_list = []
@@ -155,10 +231,15 @@ class Reader(Widget):
 		self.quotes = False
 		#self.extended_word = []
 		self.percent = 0
+		self.total_charcount = 0
 		self.total_wordcount = 0
 		self.total_modwordcount = 0
 		#self.bold = '\x01'
 		#self.italics = '\x02'
+		self.word_position = 0
+		self.modword_position = 0
+		self.char_position = 0
+		self.set_percent()
 
 	def load(self, text):
 		#with open(filename, 'r') as filey:
@@ -169,7 +250,6 @@ class Reader(Widget):
 		## add one to the char count)
 		dbg('\n\n\nReader.load()\n\n\n')
 		self.reset_count()
-		self.text = str(text)
 		#self.wordlist = re.split(
 		#	' ',
 		#	re.sub(r'([\n\r\v\f\t])',r' \1 ',
@@ -180,8 +260,11 @@ class Reader(Widget):
 		self.total_charcount = len(self.text)
 		self.total_wordcount = len(self.word_list)
 		self.total_modwordcount = len(self.modword_list)
+		#
+		### XXX DEBUG DELME
 		with open('/tmp/modword_list.txt','w') as filey:
 			filey.write(repr(self.modword_list))
+		### XXX DEBUG DELME
 		with open('/tmp/tryme.json','w') as filey:
 			json.dump(
 				{
@@ -189,12 +272,18 @@ class Reader(Widget):
 					'word_list':self.word_list,
 					'text':self.text,
 					'newline': self.orig_newline,
-					'linepos_list': self.linepos_list
+					'linepos_list': self.linepos_list,
+					'colors': {
+						'muted': '222222',
+						'semimuted': '333333',
+						'quotes': '44ff44'
+					}
 				},
 				filey,)#
 			#	indent=4,
 			#	sort_keys=True
 			#)
+
 		# # remove continuation lines
 		#newtext = re.sub(r'([a-z])-\n([a-z])', r'\1\2', newtext)
 		#newtext = re.sub(r'\n', r' \n ', newtext)
@@ -226,7 +315,7 @@ class Reader(Widget):
 			self.set_percent()
 
 	def _pad(self, word):
-		return '%s%s' % (' '*( self.maxlen - len(word)), word)
+		return '%s%s' % (' '*( self.config.maxlen - len(word)), word)
 
 	def _get_linesep(self):
 		nl_count = self.text.count('\n')
@@ -253,7 +342,7 @@ class Reader(Widget):
 				return '\n'
 
 	def _get_tabline(self, pos):
-		return self.tabline + ( ' ' * (pos % (self.maxlen - 2) )) + self.tabline
+		return self.tabline + ( ' ' * (pos % (self.config.maxlen - 2) )) + self.tabline
 
 	def _colorize_muted(self, word):
 		### should only be run after processing major parts of subword
@@ -284,7 +373,7 @@ class Reader(Widget):
 		if self.bold:
 			word = '%s%s%s' % ('[b]',word,'[/b]')
 		if self.quotes:
-			word = '%s%s%s' % ('[color=#%s]'%self.color_quotes, word, '[/color]')
+			word = '%s%s%s' % ('[color=%s]'%self.config.hex_quotes, word, '[/color]')
 		return word
 		#if re.findall(r'[\W_]', word):
 		#	if re.findall(r'[^\W_]', word):
@@ -379,7 +468,7 @@ class Reader(Widget):
 			### add_to_linepos_list will calculate added offset for line
 
 			line = re.sub(r'[\n\r]', ' ', orig_line)
-			if self.word_list and (not line or not self.gbstyle):
+			if self.word_list and (not line or not self.format == Formats.GUTENBERG):
 				## gutenberg style only shows newline after double nl
 				self.add_to_modword_list(
 					self.newline,
@@ -405,7 +494,6 @@ class Reader(Widget):
 				charpos += 1
 				#dbg('word: %s' % word)
 				if not word:
-					charpos += 1
 					continue
 				elif word == ' ' or word == '\n' or word == '\r' or word == '\f':
 					charpos += 1
@@ -418,7 +506,7 @@ class Reader(Widget):
 					)
 					charpos += 1
 					tabpos += 1
-				elif not len(word) > self.maxlen and not re.findall(r'[\W_]', word):
+				elif not len(word) > self.config.maxlen and not re.findall(r'[\W_]', word):
 					## normal sized/type word, no special sub-word stuff, no special chars
 					self.add_to_word_list(word, charpos)
 					self.add_to_modword_list(self._render_and_colorize(word), self.calc_wait(word))
@@ -550,15 +638,15 @@ class Reader(Widget):
 							postword = ''.join(subwords[i+1:])
 						else:
 							postword = ''
-						if len(preword) + len(postword) + len(tmpword) > self.maxlen:
+						if len(preword) + len(postword) + len(tmpword) > self.config.maxlen:
 							##shorten subword to fit in maxlen field
 							if len(preword) > 1:
 								if postword:
 									preword = preword[-1]
 								else:
-									preword_len = self.maxlen - len(tmpword)
+									preword_len = self.config.maxlen - len(tmpword)
 									preword = preword[-preword_len:]
-							postword_len = self.maxlen - (len(preword) + len(tmpword))
+							postword_len = self.config.maxlen - (len(preword) + len(tmpword))
 							postword = postword[:postword_len]
 						#if tmpword == '.' or tmpword == '-' or tmpword == '_' \
 						#   or tmpword == '?' or tmpword == '!':
@@ -769,7 +857,10 @@ class Reader(Widget):
 
 	def set_percent(self, *args):
 		#dbg('set_percent( %s' % repr(args))
-		self.percent = ( 100 * self.modword_position ) / self.total_modwordcount
+		if self.total_modwordcount <= 0:
+			self.percent = 0
+		else:
+			self.percent = ( 100 * self.modword_position ) / self.total_modwordcount
 
 	def setword_callback(self, dt, *args, **kwargs):
 		## maybe we can do this better
@@ -967,7 +1058,8 @@ class FastReaderScreen(Screen):
 		if self.manager.current is None:
 			# #until None changed to '', not completely built, supposedly
 			dbg('None: skip')
-			Clock.schedule_once(self.finish_init)
+			Clock.schedule_once(self._finish_init)
+			return
 		dbg(repr(args))
 		#dbg("FastReaderScreen: ids: %s" % repr(self.ids))
 		## NOTE: ref.__self__ is THE way to convert weak refs to strong
@@ -999,6 +1091,7 @@ class FastReaderScreen(Screen):
 		#
 		self.load_config()
 		self.create_reader()
+		self.canvas.ask_update()
 	#	dbg("AAAAAAAAAA: %s" % repr(self.ids))
 	#	self.dropdown = self.ids.menupanel
 
@@ -1032,7 +1125,7 @@ class FastReaderScreen(Screen):
 
 	def load_config(self):
 		try:
-			with open(config_file,'r') as filey:
+			with open(self.manager.config.config_file,'r') as filey:
 				config_text = filey.read()
 		except IOError as e:
 			if e.errno == 2:
@@ -1062,10 +1155,17 @@ class FastReaderScreen(Screen):
 
 	def write_config(self):
 		try:
-			json.dump(self.config, outfile, indent=4, sort_keys=True)
+			json.dump(self.config, self.manager.config.config_file, indent=4, sort_keys=True)
 		except Exception as e:
 			self.popupMsg('Error!\nUnable to write configuration file!\n'
 						  'output:%s' % str(e))
+
+	def get_format(self,filename):
+		if filename.split('.')[-1] == 'txt':
+			return Formats.GUTENBERG
+		else:
+			#XXX TODO: add other formats (or at least an error popup)
+			return Formats.GUTENBERG
 
 	def update_from_slider(self, slider_instance, percent, *args, **kwargs):
 		dbg('update_from_slider( %s %s' % (repr(args),repr(kwargs)))
@@ -1130,7 +1230,7 @@ class FastReaderScreen(Screen):
 		widget.opacity = 1
 
 	def create_reader(self):
-		self.reader = Reader(self.config, self.update_text)
+		self.reader = Reader(self.manager.config, self.update_text)
 		self.progbar.unbind()
 		self.reader.bind(percent=self.progbar.setter('value'))
 		#self.progbar.bind(value=self.reader.setter('percent'))
@@ -1157,7 +1257,8 @@ class FastReaderScreen(Screen):
 			return
 		filey = selection[0]
 		dbg(os.stat(filey))  # ## XXX DEBUG
-		self.ids.text.text = r'[color=#333333][b]Loading...[/b][/color]' #asdf
+		self.ids.text.text = r'[color=%s][b]Loading...[/b][/color]' % \
+							 self.manager.config.hex_semimuted #asdf
 		#self.backup_reader = self.current_reader
 		#if self.backup_reader:
 		#	pass # # asdfasdfasdf unbind progbar
@@ -1169,11 +1270,11 @@ class FastReaderScreen(Screen):
 			self.popupMsg('ERROR:\nUnable to open file %s.\n'
 						  '\n(Exception:%s)' % (repr(filey), str(e)))
 		else:
-			self.reader.load(text)
+			self.reader.load(text, format=self.reader.get_format(filey))
 			self.progbar.unbind()
 			self.reader.bind(percent=self.progbar.setter('value'))
 			#self.progbar.bind(value=self.reader.setter('percent'))
-			self.ids.text.text = r'[color=#333333][b]Press play![/b][/color]' #asdf
+			self.ids.text.text = r'[color=%s][b]Press play![/b][/color]' % self.manager.config.hex_semimuted #asdf
 			self.isready = True
 			self.isplaying = False
 			self.progslider.value = 0
@@ -1186,7 +1287,7 @@ class FastReaderScreen(Screen):
 		if text is None:
 			dbg('LABEL:END')
 			self.widgetdict['progslider'].value = self.reader.get_percent()
-			self.ids.text.text = r'[color=#333333][b]End.[/b][/color]'
+			self.ids.text.text = r'[color=%s][b]End.[/b][/color]' % self.manager.config.hex_semimuted
 			self.pause()
 		else:
 			if escape:
@@ -1420,21 +1521,28 @@ class OpenFileScreen(Screen):
 
 class ScratchpadScreen(Screen):
 	sample_text = StringProperty(
-		'Welcome to FastReader.\n'\
-		'I hope you enjoy it.\n'\
-		'If you are new to this kind of '\
-		'speed-reading, try starting at a '\
-		'slow speed until you feel comfortable... '\
-		'This particular message is from the ScratchPad. '\
-		'In the ScratchPad, you can paste text '\
-		'and send it straight to the reader.\n'\
-		'The ScratchPad and all other resources '\
-		'are available from the dropdown menu. '\
-		'To reach the dropdown menu, click on '\
-		'the upper right corner of this screen '\
-		'while in reading mode.'
+		'Welcome to FastReader.\n'
+		'I hope you enjoy it.\n'
+		'If you are new to this kind of '
+		'speed-reading, try starting at a '
+		'slow speed until you feel comfortable... \n'
+		'This particular message is from the ScratchPad.\n'
+		'In the ScratchPad, you can paste text '
+		'and send it straight to the reader.\n'
+		'The ScratchPad and all other resources '
+		'are available from the dropdown menu.\n'
+		'To reach the dropdown menu, click on '
+		'the upper right corner of this screen '
+		'while in reading mode.\n'
+		'You know you are in reading mode when you '
+		'see buttons for "play/pause", "slow" and '
+		'"fast-forward"...'
 	)
-	pass
+	#scratch_text = StringProperty(self.sample_text)
+	def _load(self):
+		pass
+
+
 
 
 class HelpScreen(Screen):
@@ -1454,12 +1562,17 @@ class FRScreenManager(ScreenManager):
 
 	def __init__(self, **kwargs):
 		super(FRScreenManager, self).__init__(**kwargs)
+		self.config = Settings()
 		dbg("FRScreenManager IDS: %s" % repr(self.ids))
 		dbg("FRScreenManager curr: %s" % repr(self.current))
 		dbg("FRScreenManager SCREENS: %s" % repr([Screen(name='Title {}'.format(i)) for i in range(4)]))
 #		self.reader = Reader()
 		#self.config_popup = ConfigPopup()
 		#self.file_popup = FilePopup()
+		Clock.schedule_once(self._finish_init)
+
+	def _finish_init(self,*args,**kwargs):
+		self.canvas.ask_update()
 
 	def load_file(self, load_func, cancel_func=None, multiselect=False):
 		"""

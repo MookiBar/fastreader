@@ -1,4 +1,6 @@
 #:kivy 1.1
+#:import path_join os.path.join
+#:import get_hex_from_color kivy.utils.get_hex_from_color
 #set: programname "FastReader"
 #set: default_reg_font_shrink 14
 #set: default_scratchpad_text "Welcome to FastReader.\nI hope you enjoy it.\nIf you are new to this kind of speed-reading, try starting at a slow speed until you feel comfortable... This particular message is from the ScratchPad. In the ScratchPad, you can paste text and send it straight to the reader.\nThe ScratchPad and all other resources are available from the dropdown menu. To reach the dropdown menu, click on the upper right corner of this screen while in reading mode."
@@ -24,6 +26,29 @@
 	AboutScreen:
 		name: "about"
 
+<Settings>:
+	settings_folder: '.'
+	icon_folder: '.'
+	maxwordlen: 8
+	color_muted: [0.13, 0.13, 0.13, 1]
+	hex_muted: get_hex_from_color(self.color_muted)
+	color_semimuted: [0.2, 0.2, 0.2, 1]
+	hex_semimuted: get_hex_from_color(self.color_semimuted)
+	color_quotes: [0.26, 1.0, 0.26, 1]
+	hex_quotes: get_hex_from_color(self.color_quotes)
+	newline: '[color=%s]%s[/color]' % (self.hex_muted,'_'*self.maxwordlen)
+	tabline: '[color=%s]_[/color]' % (self.hex_muted)
+	#
+	wait_base: 0.08  # #float/double: for normal words, per char
+	wait_ab: 0.05  # #float/double: for abnormal words, per char
+	wait_capitals: 0.03  # #float/double: for each capital letter
+	smallwordlen: 4  # #uint: small words get same fast pace
+	wordlenfactor: 6  # #? uint
+	img_icon_play: path_join(self.icon_folder, "play.png")
+	img_icon_pause: path_join(self.icon_folder, "pause.png")
+	img_icon_slower: path_join(self.icon_folder,"slomo.png")
+	img_icon_faster: path_join(self.icon_folder, "ffwd.png")
+	config_file: path_join(self.settings_folder, "fastreader.conf")
 
 <FastReaderScreen>:
 	size_hint: 1, 1
@@ -397,7 +422,7 @@
 				on_release: root.manager.current = "reader"
 			Button:
 				height: root.row_height / 2
-				font_size: root.fontsize_ret
+				font_size: root.fontsize_reg
 				text: "Load"
 				on_release: root.load()
 		TextInput:
