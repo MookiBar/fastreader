@@ -41,10 +41,13 @@ from enum import Enum
 import sys
 import re  # #2
 import os
+from collections import namedtuple
+from unicodedata import category as ucategory
 #from time import sleep
 #### ^expunge this! replace sleep
 
 import kivy
+from collections import namedtuple
 kivy_version = kivy.__version__
 
 ## if we want to share these with the kv file,
@@ -70,6 +73,28 @@ default_config_json = """
     },
 }
 """
+
+### word_struct:
+### 	int (I):	char position in text where word starts
+### 	byte(B):	length of word in text
+### 	int (I):	index of word in sub-word list
+### 	byte(B): 	number of subwords (struct elements) for this word
+WordTupleStructString = '=IBIB'
+WordTuple = namedtuple('Word','char_pos word_len subword_index subword_count')
+
+### subword_struct:
+###		int (I): 	char position in text where subword starts
+### 	byte(B): 	length of sub-word in text
+### 	int (I):	index of word in original-word list
+### 	byte(B):	total count of subwords for this word
+### 	byte(B): 	flags:
+### 					quote color,
+### 					italics,
+### 					bold,
+### 					muted,
+### 	byte(B):	weight
+ModWordTupleStructString = '=IBIBBB'
+ModWordTuple = namedtuple('ModWord','char_pos subword_len word_index subword_count flags weight')
 
 class Formats(Enum):
 	PLAINTEXT = 0
@@ -126,7 +151,8 @@ def version_check(ver, minver):
 #	TabbedPanel:
 
 class Settings(Widget):
-	settings_folder = StringProperty()
+	settings_folder = StringProperty('.')
+	docs_folder = StringProperty('.')
 	icon_folder = StringProperty()
 	newline = StringProperty()
 	tabline = StringProperty()
@@ -152,17 +178,186 @@ class Settings(Widget):
 	def __init__(self):
 		super(Settings,self).__init__()
 
+
 class Book(Widget):
 	"""
 	Holds original words, their modifications and the constructs that contain them.
 	Required args:
+		@str text
+		@Settings settings
 	"""
-	def __init__(self, encoding = Encodings.UTF8):
+	def __init__(self, text, settings):
+		"""
+
+		:param text: string of the entire document to read
+		:param settings: ref to settings object
+		"""
+		self.text = text
+		self.settings = settings
+		self._detect_encoding()
 		## original words are held in text_array
 		self.text_array = bytearray()
-		self.text_struct_array = bytearray()
-		self.text_struct_str = 'II'
-		self.mod_text_array = bytearray()
+		self.word_structs = bytearray()
+		### word_struct:
+		### 	int (I):	char position in text where word starts
+		### 	byte(B):	length of word in text
+		### 	int (I):	index of word in sub-word list
+		### 	byte(B): 	number of subwords (struct elements) for this word
+		self.word_struct = struct.Struct(WordTupleStructString)
+		#
+		### subword_struct:
+		###		int (I): 	char position in text where subword starts
+		### 	byte(B): 	length of sub-word in text
+		### 	int (I):	index of word in original-word list
+		### 	byte(B):	length of....something
+		### 	byte(B): 	flags:
+		### 					quote color,
+		### 					italics,
+		### 					bold,
+		### 					muted,
+		### 	byte(B): 	weight
+		self.subword_struct = struct.Struct(ModWordTupleStructString)
+		self.subword_structs = bytearray()
+
+	def _get_weight(self, subword):
+		weight = 10
+		for i in subword:
+			tmpcat = ucategory(i)
+			if tmpcat == 'Ll':
+				weight += 2
+			elif tmpcat == 'Lu':
+				weight += 6
+			elif tmpcat == 'Nd':
+				weight += 6
+			elif tmpcat[0] == 'P':
+				weight += 8
+			else:
+				weight += 10
+		return weight
+
+	def _detect_encoding(self):
+		### TODO: complete and account for different encodings
+		if self.text[0] == '\ufeff':
+			self._encoding = Encodings.UTF8
+		else:
+			self._encoding = Encodings.UTF8
+
+	def _get_word_struct_at_index(self,index):
+		"""
+
+		:param index:
+		:return:
+		"""
+		return self.word_struct.unpack_from(
+			self.word_structs,
+			offset=self.word_struct.size * index
+		)
+
+	def get_word_at_index(self,index):
+		"""
+
+		:param index:
+		:return:
+		"""
+		str_pos, str_len, subword, sw_count = self._get_word_struct_at_index(index)
+		return self.text[str_pos : str_pos + str_len]
+
+	def _get_subword_struct_at_index(self,index):
+		"""
+
+		:param index:
+		:return:
+		"""
+		return self.subword_struct.unpack_from(
+			self.subword_structs,
+			offset=self.subword_structs.size * index
+		)
+
+	def get_subwordf_at_index(self,index):
+		"""
+		Get partial word and flags at subword index.
+
+		:param index:
+		:return:
+		"""
+		str_pos, str_len, word, w_count, flags = self._get_subword_struct_at_index(index)
+		return self.text[str_pos : str_pos + str_len], flags
+
+	def _process_text(self):
+		def _add_to_words(self,subwordlist):
+		    nonlocal flags
+			newflags = flags
+		    tmpcharpos = subwordlist.pop(0)
+			subword_count = len(subwordlist)
+			if subword_count > 1:
+				if
+				tmpwordlen = len(''.join(subwordlist))
+			else:
+				tmpwordlen = len(subwordlist[0])
+			wordlen = 0
+			for i in range(len(subwordlist)):
+				tmpsubword = subwordlist[i]
+				tmpsubwordlen = len(tmpsubword)
+				tmpweight = self._get_weight(tmpsubword)
+				self.subword_structs.extend(
+					self.subword_struct.pack(XXX XXX XXX) # asdf asdf asdf
+				)
+
+
+		self._detect_encoding()
+		### TODO: remove control/non-printable chars
+		#self.text = re.sub(..)
+		linelist = self.text.splitlines(True)
+		charpos = 0
+		wordnum = 0
+		subwordnum = 0
+		flags = 0
+		line_charpos = 0
+		for linenum in range(len(linelist)):
+			words_in_line = 0
+			line = linelist[linenum]
+			subwordnum = 0
+			sublinelist = re.split(r'(\W)',line)
+			subwordlist = [line_charpos,]
+			tmp_charpos = line_charpos
+			found_newline = False
+			found_words = False
+			while sublinelist:
+				tmpelement = sublinelist.pop(0)
+				if not tmpelement:
+					continue
+				elif tmpelement == ' ':
+					## process prev subwordlist, new empty word
+					if subwordlist:
+						self._add_to_words(subwordlist)
+						subwordlist = None
+				elif tmpelement == '\t':
+					## process prev subwordlist, new word with tab
+					if subwordlist:
+						self._add_to_words(subwordlist)
+						subwordlist = None
+
+				elif tmpelement == '\n' or tmpelement == '\r':
+					## process prev subwordlist, new word with newline if first in line
+					if subwordlist:
+						self._add_to_words(subwordlist)
+						subwordlist = None
+					if not found_newline and not subwordlist_list:
+						self._add_to_words([tmp_charpos + 1,'\n'])
+					subwordlist = None
+				else:
+					if not subwordlist:
+						subwordlist = [tmp_charpos,]
+					subwordlist.append(tmpelement)
+				tmp_charpos += len(tmpelement)
+			if subwordlist:
+				self._add_to_words(subwordlist, flags)
+			line_charpos += len(line)
+
+
+
+
+
 
 
 class Reader(Widget):
@@ -171,10 +366,11 @@ class Reader(Widget):
 	Required args:
 	@string filename     file with text to load
 	@function callback   should take one arg (string) to update label
+
 	"""
-	word_struct = 'II'
+	#word_struct = 'II'
 	## ( uint_textcharpos, uint_modwordpos )
-	modword_struct = 'IIBId'
+	#modword_struct = 'IIBId'
 	## ( uint_wordnum, uint_modwordpos, ubyte_wordflags, uint_wordlen, double_wait, )
 
 	percent = NumericProperty()
@@ -188,14 +384,14 @@ class Reader(Widget):
 
 	def __init__(
 			self,
-			config,
+			settings,
 			callback,
 			text_format=Formats.GUTENBERG,
 	):
 		super(Reader, self).__init__()
 		## for gutenberg docs...
 		## translate _i_ and =b= to italics and bold
-		self.config = config
+		self.settings = settings
 		self.text_format = text_format
 		self.callback = callback
 		#self.maxlen = maxlen
@@ -222,7 +418,7 @@ class Reader(Widget):
 
 	def reset_items(self):
 		self.char_position = 0  # #
-		self.speedadjust = self.config.speed_adjust
+		self.speedadjust = self.settings.speed_adjust
 		#self.wordlist = []
 		self.word_list = []
 		self.modword_list = []
@@ -241,7 +437,8 @@ class Reader(Widget):
 		self.char_position = 0
 		self.set_percent()
 
-	def load(self, text):
+	def load_text(self, text):
+		self.text = text
 		#with open(filename, 'r') as filey:
 		#	self.text = filey.read()
 		#
@@ -315,7 +512,7 @@ class Reader(Widget):
 			self.set_percent()
 
 	def _pad(self, word):
-		return '%s%s' % (' '*( self.config.maxlen - len(word)), word)
+		return '%s%s' % (' ' * (self.settings.maxlen - len(word)), word)
 
 	def _get_linesep(self):
 		nl_count = self.text.count('\n')
@@ -342,7 +539,7 @@ class Reader(Widget):
 				return '\n'
 
 	def _get_tabline(self, pos):
-		return self.tabline + ( ' ' * (pos % (self.config.maxlen - 2) )) + self.tabline
+		return self.tabline + ( ' ' * (pos % (self.settings.maxlen - 2))) + self.tabline
 
 	def _colorize_muted(self, word):
 		### should only be run after processing major parts of subword
@@ -373,7 +570,7 @@ class Reader(Widget):
 		if self.bold:
 			word = '%s%s%s' % ('[b]',word,'[/b]')
 		if self.quotes:
-			word = '%s%s%s' % ('[color=%s]'%self.config.hex_quotes, word, '[/color]')
+			word = '%s%s%s' % ('[color=%s]' % self.settings.hex_quotes, word, '[/color]')
 		return word
 		#if re.findall(r'[\W_]', word):
 		#	if re.findall(r'[^\W_]', word):
@@ -506,7 +703,7 @@ class Reader(Widget):
 					)
 					charpos += 1
 					tabpos += 1
-				elif not len(word) > self.config.maxlen and not re.findall(r'[\W_]', word):
+				elif not len(word) > self.settings.maxlen and not re.findall(r'[\W_]', word):
 					## normal sized/type word, no special sub-word stuff, no special chars
 					self.add_to_word_list(word, charpos)
 					self.add_to_modword_list(self._render_and_colorize(word), self.calc_wait(word))
@@ -638,15 +835,15 @@ class Reader(Widget):
 							postword = ''.join(subwords[i+1:])
 						else:
 							postword = ''
-						if len(preword) + len(postword) + len(tmpword) > self.config.maxlen:
+						if len(preword) + len(postword) + len(tmpword) > self.settings.maxlen:
 							##shorten subword to fit in maxlen field
 							if len(preword) > 1:
 								if postword:
 									preword = preword[-1]
 								else:
-									preword_len = self.config.maxlen - len(tmpword)
+									preword_len = self.settings.maxlen - len(tmpword)
 									preword = preword[-preword_len:]
-							postword_len = self.config.maxlen - (len(preword) + len(tmpword))
+							postword_len = self.settings.maxlen - (len(preword) + len(tmpword))
 							postword = postword[:postword_len]
 						#if tmpword == '.' or tmpword == '-' or tmpword == '_' \
 						#   or tmpword == '?' or tmpword == '!':
@@ -1270,7 +1467,7 @@ class FastReaderScreen(Screen):
 			self.popupMsg('ERROR:\nUnable to open file %s.\n'
 						  '\n(Exception:%s)' % (repr(filey), str(e)))
 		else:
-			self.reader.load(text, format=self.reader.get_format(filey))
+			self.reader.load_text(text)
 			self.progbar.unbind()
 			self.reader.bind(percent=self.progbar.setter('value'))
 			#self.progbar.bind(value=self.reader.setter('percent'))
