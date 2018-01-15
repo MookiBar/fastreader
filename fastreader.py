@@ -43,6 +43,7 @@ import re  # #2
 import os
 from collections import namedtuple
 from unicodedata import category as ucategory
+from struct import Struct
 #from time import sleep
 #### ^expunge this! replace sleep
 
@@ -203,7 +204,7 @@ class Book(Widget):
 		### 	byte(B):	length of word in text
 		### 	int (I):	index of word in sub-word list
 		### 	byte(B): 	number of subwords (struct elements) for this word
-		self.word_struct = struct.Struct(WordTupleStructString)
+		self.word_struct = Struct(WordTupleStructString)
 		#
 		### subword_struct:
 		###		int (I): 	char position in text where subword starts
@@ -216,26 +217,34 @@ class Book(Widget):
 		### 					bold,
 		### 					muted,
 		### 	byte(B): 	weight
-		self.subword_struct = struct.Struct(ModWordTupleStructString)
+		self.subword_struct = Struct(ModWordTupleStructString)
 		self.subword_structs = bytearray()
 
 	def _get_weight(self, subword):
 		weight = 10
 		for i in subword:
 			tmpcat = ucategory(i)
+			## lowercase letters
 			if tmpcat == 'Ll':
 				weight += 2
+			## uppercase letters
 			elif tmpcat == 'Lu':
 				weight += 6
+			## digits
 			elif tmpcat == 'Nd':
 				weight += 6
+			## punctuation
 			elif tmpcat[0] == 'P':
 				weight += 8
 			else:
 				weight += 10
-		return weight
+		return int(weight)
 
 	def _detect_encoding(self):
+		"""
+
+		:return: Encodings
+		"""
 		### TODO: complete and account for different encodings
 		if self.text[0] == '\ufeff':
 			self._encoding = Encodings.UTF8
@@ -257,7 +266,7 @@ class Book(Widget):
 		"""
 
 		:param index:
-		:return:
+		:return: str
 		"""
 		str_pos, str_len, subword, sw_count = self._get_word_struct_at_index(index)
 		return self.text[str_pos : str_pos + str_len]
@@ -266,11 +275,11 @@ class Book(Widget):
 		"""
 
 		:param index:
-		:return:
+		:return: str
 		"""
 		return self.subword_struct.unpack_from(
 			self.subword_structs,
-			offset=self.subword_structs.size * index
+			offset=self.subword_struct.size * index
 		)
 
 	def get_subwordf_at_index(self,index):
@@ -278,31 +287,91 @@ class Book(Widget):
 		Get partial word and flags at subword index.
 
 		:param index:
-		:return:
+		:return: str, byte
 		"""
 		str_pos, str_len, word, w_count, flags = self._get_subword_struct_at_index(index)
 		return self.text[str_pos : str_pos + str_len], flags
 
+	def get_word_count(self):
+		"""
+
+		:return: int: word_count
+		"""
+		return int( len(self.word_structs) / self.word_struct.size )
+
+	def get_subword_count(self):
+		"""
+
+		:return: int: subword_count
+		"""
+		return int( len(self.subword_structs) / self.subword_struct.size )
+
 	def _process_text(self):
+		flags = 0
 		def _add_to_words(self,subwordlist):
-		    nonlocal flags
+			nonlocal flags
+			print('DEBUG: processing word: %s' % repr(subwordlist))
 			newflags = flags
-		    tmpcharpos = subwordlist.pop(0)
+			tmpcharpos = subwordlist.pop(0)
 			subword_count = len(subwordlist)
-			if subword_count > 1:
-				if
-				tmpwordlen = len(''.join(subwordlist))
-			else:
-				tmpwordlen = len(subwordlist[0])
+			tmpwordlen = len(''.join(subwordlist))
+			tmp_wordindex = len(self.word_structs) / self.word_struct.size
+			### Word
+			### char_pos, word_len, subword_index, subword_count
+			print('DEBUG: pack word: %d %d %d %d' % (tmp_charpos, tmpwordlen, self.get_subword_count(), subword_count))
+			self.word_structs.extend(
+				self.word_struct.pack(tmp_charpos, tmpwordlen, self.get_subword_count(), subword_count)
+			)
 			wordlen = 0
-			for i in range(len(subwordlist)):
+			for i in range(subword_count):
+				tmp_skip = False
 				tmpsubword = subwordlist[i]
 				tmpsubwordlen = len(tmpsubword)
 				tmpweight = self._get_weight(tmpsubword)
-				self.subword_structs.extend(
-					self.subword_struct.pack(XXX XXX XXX) # asdf asdf asdf
-				)
+				## check for quotes, bold, italics (gutenberg)
+				## iff at beginning or end of word
+				if subword_count > 1:
+					if i == 0:
+						if tmpsubword == '"':
+							newflags = newflags & WordFlags.QUOTES
+						elif tmpsubword == '*':
+							newflags = newflags & WordFlags.BOLD
+							tmp_skip = True
+						elif tmpsubword == '_':
+							newflags = newflags & WordFlags.ITALICS
+							tmp_skip = True
+					elif i == subword_count - 1:
+						if tmpsubword == '"':
+							newflags = newflags ^ WordFlags.QUOTES
+						elif tmpsubword == '*':
+							newflags = newflags ^ WordFlags.BOLD
+							tmp_skip = True
+						elif tmpsubword == '_':
+							newflags = newflags ^ WordFlags.ITALICS
+							tmp_skip = True
 
+				###
+				### char_pos, subword_len, word_index, subword_count, flags, weight
+				print('DEBUG: pack subword: %d %d %d %d %d %d' % (
+						tmp_charpos,
+						len(tmpsubword),
+						self.get_word_count(),
+						self.get_subword_count(),
+						flags,
+						self._get_weight(tmpsubword)
+				))
+				tmpsubarr = self.subword_struct.pack(
+						tmp_charpos,
+						len(tmpsubword),
+						self.get_word_count(),
+						self.get_subword_count(),
+						flags,
+						self._get_weight(tmpsubword)
+					) ## asdf asdf asdf
+				self.subword_structs.extend(
+					tmpsubarr
+				)
+			flags = newflags
 
 		self._detect_encoding()
 		### TODO: remove control/non-printable chars
@@ -311,7 +380,6 @@ class Book(Widget):
 		charpos = 0
 		wordnum = 0
 		subwordnum = 0
-		flags = 0
 		line_charpos = 0
 		for linenum in range(len(linelist)):
 			words_in_line = 0
@@ -329,21 +397,21 @@ class Book(Widget):
 				elif tmpelement == ' ':
 					## process prev subwordlist, new empty word
 					if subwordlist:
-						self._add_to_words(subwordlist)
+						_add_to_words(self, subwordlist)
 						subwordlist = None
 				elif tmpelement == '\t':
 					## process prev subwordlist, new word with tab
 					if subwordlist:
-						self._add_to_words(subwordlist)
+						_add_to_words(self, subwordlist)
 						subwordlist = None
 
 				elif tmpelement == '\n' or tmpelement == '\r':
 					## process prev subwordlist, new word with newline if first in line
 					if subwordlist:
-						self._add_to_words(subwordlist)
+						_add_to_words(self, subwordlist)
 						subwordlist = None
 					if not found_newline and not subwordlist_list:
-						self._add_to_words([tmp_charpos + 1,'\n'])
+						_add_to_words(self, [tmp_charpos + 1, '\n'])
 					subwordlist = None
 				else:
 					if not subwordlist:
@@ -351,13 +419,8 @@ class Book(Widget):
 					subwordlist.append(tmpelement)
 				tmp_charpos += len(tmpelement)
 			if subwordlist:
-				self._add_to_words(subwordlist, flags)
+				_add_to_words(self, subwordlist)
 			line_charpos += len(line)
-
-
-
-
-
 
 
 class Reader(Widget):
