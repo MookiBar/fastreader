@@ -41,6 +41,7 @@ PARSER.add_argument('-w', '--word', metavar='WORDNUM', type=int,
 PARSER.add_argument('-s', '--speed', metavar='SPEEDNUM', type=int,
                     help='optional: speed to start at')
 PARSER.add_argument('-d', '--debug', action='store_true', help='turn on debug output to file: %s' % DEBUG_FILE)
+PARSER.add_argument('--demo', action='store_true', help='run a demo recommended for beginners')
 # # TODO: find a way to read from stdin for text and then stdin for keystrokes
 # parser.add_argument('-s', '--stdin', action='store_true', help='parse text from stdin')
 
@@ -56,7 +57,7 @@ FONT = {
     'bold': '\x1b[1m',
     'italic': '\x1b[3m',
     'clear': '\x1b(B\x1b[m',
-    'newline': ' - ',
+    'newline': '- - ',
     'tab': '_ ',
 }
 
@@ -71,6 +72,24 @@ SIGNS = {
     'unknown': '(X)',
 }
 
+demo_txt = """
+...Okay.
+Relax.
+Relax...
+...Let your eyes rest right here on the screen.
+Focus here
+in the center and let your eyes stay.
+Let your eyes relax, let your mind relax, let all of your senses relax as you let yourself soak in these words.
+Let the words wash over you. No need to think about it. Just let it happen....
+Stay here in the center. Stay right here and let your eyes soak in these words.
+As you become more and more relaxed, you will absorb more and more words.
+The more words you see, the more you will retain the information without even thinking about it.
+As you practice this new reading experience more and more, you will soon become an _expert_.
+You will tell all your friends, "I can read so fast! I can read faster than you can possibly imagine!"
+And you can do it without even trying. That is it. *Now you are ready.*
+Find a book.....and relax... Relax! Find a book at let the moment take you.
+Do it!
+"""
 
 def log_to_debug_file():
     filehandler = logging.handlers.RotatingFileHandler(
@@ -102,8 +121,10 @@ def uncaught_exception_handler(exc_type, exc, tb):
 sys.excepthook = uncaught_exception_handler
 
 class Reader():
-    def __init__(self, text, speed=10):
+    def __init__(self, text, speed=10, max_speed=90, auto_speed_up=False):
         logger.debug('__init__()')
+        self.auto_speed_up = auto_speed_up
+        self.max_speed = max_speed
         self.pause = True
         self.stopping = False
         self.speed = speed
@@ -133,7 +154,9 @@ class Reader():
         logger.debug('start()')
         self.display_banner()
         self._setup_tty()
-        self.display_word()
+        sys.stdout.write('%s press spacebar %s\r' % (FONT['italic'] + FONT['bold'], FONT['clear']))
+        sys.stdout.flush()
+        #self.display_word()
         self.word_popper_thread.start()
         self.key_checker_thread.start()
         self.key_checker_thread.join()
@@ -279,20 +302,24 @@ class Reader():
                     self.current_subword_num += 1
                     if self.current_subword_num >= len(subwords):
                         self.change_to_word_num(self.current_word_num + 1)
+                    if self.auto_speed_up and self.speed < self.max_speed:
+                        if self.current_word_num % 2:
+                            self.speed += 1
                     self.display_word()
 
     def display_banner(self):
         sys.stdout.write("""{yellow}
 
 command keys:
-            <space>) toggle play/pause
+            <spacebar>) toggle play/pause
             j) speed down
             k) speed up
+            q) quit/exit the program
 while paused:
-            h) previous-word                        gg) skip to beginning
-            l) next-word                            GG) skip to end
-            /) search forward (case-sensitive)      ^) skip to start of sentence
-            ?) search backward (case-sensitive)     $) skip to end of sentence
+            h) previous-word                        gg) skip to beginning text
+            l) next-word                            GG) skip to end of text
+            /) search forward (case-sensitive)      ^) skip to start of line
+            ?) search backward (case-sensitive)     $) skip to end of line
             {clear}
         \n""".format(yellow=FONT['yellow'],clear=FONT['clear']))
         sys.stdout.flush()
@@ -449,18 +476,26 @@ while paused:
                         self.display_word()
             elif x == 'k':
                 #up
-                with self.lock:
-                    self.speed += 1
-                    self._extra_input = '%s%d' % (SIGNS['faster'], self.speed)
-                    self.display_word()
+                if self.speed < self.max_speed:
+                    with self.lock:
+                        self.speed += 1
+                        self._extra_input = '%s%d' % (SIGNS['faster'], self.speed)
+                        self.display_word()
+                else:
+                    with self.lock:
+                        self._extra_input = '%s%d(MAX)' % (SIGNS['faster'], self.speed)
+                        self.display_word()
             elif x == 'j':
                 # down
-                with self.lock:
-                    self.speed -= 1
-                    if self.speed <= 0:
-                        self.speed = 1
-                    self._extra_input = '%s%d' % (SIGNS['slower'], self.speed)
-                    self.display_word()
+                if self.speed <= 1:
+                    with self.lock:
+                        self._extra_input = '%s%d(X)' % (SIGNS['slower'], self.speed)
+                        self.display_word()
+                else:
+                    with self.lock:
+                        self.speed -= 1
+                        self._extra_input = '%s%d' % (SIGNS['slower'], self.speed)
+                        self.display_word()
             elif x == 'h':
                 # left
                 if self.pause and self.current_word_num > 0:
@@ -521,25 +556,32 @@ def main():
     if args.debug:
         log_to_debug_file()
 
-    if not args.filename:
-        PARSER.error('filename required.')
-    try:
-        with open(args.filename, 'r') as filey:
-            orig_txt = filey.read()
-    except Exception as e:
-        PARSER.error(repr(e))
+    if args.demo:
+        orig_txt = demo_txt
+        speed = 5
+        speedup = True
+    else:
+        speedup = False
+        if not args.filename:
+            PARSER.error('filename required.')
+        try:
+            with open(args.filename, 'r') as filey:
+                orig_txt = filey.read()
+        except Exception as e:
+            PARSER.error(repr(e))
+        if args.speed is None:
+            speed = 20
+        else:
+            if args.speed <= 0 or args.speed >= 200:
+                PARSER.error('speed must be a number between 1 and 200')
+            else:
+                speed = args.speed
     if not sys.stdin.isatty():
         PARSER.error('must be run in a tty without pipes.')
         sys.exit(5)
-    if args.speed is None:
-        speed = 20
-    else:
-        if args.speed <= 0 or args.speed >= 200:
-            PARSER.error('speed must be a number between 1 and 200')
-        else:
-            speed = args.speed
 
-    reader = Reader(text=orig_txt, speed=speed)
+    sys.stdout.write('\n%s%sloading...%s\r' % (FONT['grey'], FONT['italic'], FONT['clear']))
+    reader = Reader(text=orig_txt, speed=speed, max_speed=70, auto_speed_up=speedup)
     if not reader.book.get_word_count():
         PARSER.error('text has no valid words')
     if args.word:
