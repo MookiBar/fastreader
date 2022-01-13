@@ -93,7 +93,8 @@ class Encodings(Enum):
 ConfTuple = namedtuple('SubWord',
                        'max_subword_len'
                        ' weight_base weight_special weight_uppers weight_numbers'
-                       ' weight_subwords small_word_len weight_extra_char speed_adjust')
+                       ' weight_subwords weight_punctuation'
+                       ' small_word_len weight_extra_char speed_adjust')
 #class DefaultSettings():
 DefaultConf = ConfTuple(
     max_subword_len=7,
@@ -101,7 +102,8 @@ DefaultConf = ConfTuple(
     weight_special=5,  # #float/double: for abnormal words, per char
     weight_uppers=6,  # #float/double: for each capital letter
     weight_numbers=10,
-    weight_subwords=2,
+    weight_subwords=3,
+    weight_punctuation=4,
     small_word_len=4,  # #uint: small words get same fast pace
     weight_extra_char=1,  # #? uint
     speed_adjust=1,
@@ -351,332 +353,381 @@ class Book():
         #subword_struct = Struct(SubWordStructString)
         #word_structs = bytearray()
         #subword_structs = bytearray()
-        ##########################################################
-        ############################## START SUB-DEF _add_to_words
-        def _add_to_words():
-            nonlocal self
-            #nonlocal word_struct
-            #nonlocal word_structs
-            #nonlocal subword_struct
-            #nonlocal subword_structs
+
+        # ############################################
+        # # START _add_word_list()
+        def _add_word_list():
             nonlocal flags
-            nonlocal subwordlist
-            nonlocal subword_start_pos
-            nonlocal subword_current_pos
-            ### XXX DEBUG TODO
-            logger.debug('processing word: %s (pos: %d)' %
-                         (repr(subwordlist), subword_start_pos)
-                         )
-            newflags = flags
-            # # to immediately set flags for current element, assign to `flags`
-            # # otherwise, `newflags` will set flags for next element
-            if len(subwordlist) > self.max_byte_num:
-                logger.warning(
-                    'subword list must be truncated (len %d after pos %d' % \
-                    (len(subwordlist), subword_start_pos)
-                )
-                subwordlist = subwordlist[:self.max_byte_num]
-            ## ^ can only store one byte for subword count
-            #tmpcharpos = subwordlist.pop(0) # ??
-            subword_count = len(subwordlist)
-            tmpwordlen = len(''.join(subwordlist))
-            tmp_wordindex = len(self.word_structs) / self.word_struct.size
+            nonlocal x_subwordlist
+            nonlocal x_subwordlist_t
+            nonlocal x_subword_weights
+            nonlocal x_subword_start_pos
+            nonlocal x_subword_current_pos
+            logger.warning('add_word_list: %s\n\t%s\n\t%s\t(%d, %d)' % \
+                           (repr(x_subwordlist), repr(x_subwordlist_t), repr(x_subword_weights),
+                            x_subword_start_pos,x_subword_current_pos))
+            _flags = flags
+            _next_flags = _flags
+            _x_subword_count = len(x_subwordlist)
+            if len(x_subwordlist_t) != _x_subword_count:
+                raise ValueError('subword count not matching type count: %d %d (%d)' % \
+                                 (_x_subword_count, len(x_subwordlist_t), x_subword_current_pos))
+            elif len(x_subword_weights) != _x_subword_count:
+                raise ValueError('subword count not matching weights count: %d %d (%d)' % \
+                                 (_x_subword_count, len(x_subword_weights), x_subword_current_pos))
+            if _x_subword_count > 255:
+                logger.warning('subword count too large: %d (%d)' % \
+                               (_x_subword_count, x_subword_current_pos))
+                x_subwordlist = x_subwordlist[:256]
+                _x_subword_count = 255
+            _x_total_char_len = len(''.join(x_subwordlist))
             ### Word
             ### char_pos, word_len, subword_index, subword_count
             self.word_structs.extend(
                 self.word_struct.pack(
-                    subword_start_pos,
-                    tmpwordlen,
+                    x_subword_start_pos,
+                    _x_total_char_len,
                     self.get_subword_count(),
-                    subword_count
+                    _x_subword_count,
                 )
             )
-            wordlen = 0
-            tmpcharpos = 0
-            for xi in range(subword_count):
-                tmpsubword = subwordlist[xi]
-                tmpsubwordlen = len(tmpsubword)
-                if tmpsubwordlen > self.max_byte_num:
-                    logger.warning('subword too large, char pos: %d' % subword_current_pos)
-                    tmpsubword = tmpsubword[:self.max_byte_num]
-                    tmpsubwordlen = len(tmpsubword)
-                tmpweight = self._get_weight(tmpsubword)
-                if subword_count > 1:
-                    subword_weight_o = tmpweight * self.conf.weight_subwords / self.conf.weight_base
-                    #subword_weight_o = xi * subword_count * self.conf.weight_subwords
-                    #subword_weight_o /= (1 + self.conf.max_subword_len - tmpsubwordlen)
-                    #if subword_weight_o > 20:
-                    #    subword_weight_o = 20
-                    #elif subword_weight_o < 0:
-                    #    subword_weight_o = 0
-                    tmpweight += int(subword_weight_o)
-                    # XXX
-                    # # check for quotes, bold, italics (gutenberg)
-                    # # iff at beginning or end of word
-                    ######################
-                    if tmpsubword == '"':
-                        if flags & FormatFlags.QUOTES:
+            for _xi in range(_x_subword_count):
+                _tmp_subword = x_subwordlist[_xi]
+                _tmp_subword_type = x_subwordlist_t[_xi]
+                _tmp_subword_len = len(_tmp_subword)
+                _tmp_subword_weight = x_subword_weights[_xi]
+                if _tmp_subword_type == '.':
+                    # # check/set flags based on symbols
+                    if _tmp_subword == '"':
+                        if _flags & FormatFlags.QUOTES:
                             # # end-quotes must come after letters/nums
                             # # ...and should not have letters/nums after it
-                            if xi == tmpsubwordlen - 1:
-                                flags &= ~ FormatFlags.QUOTES
+                            if _xi == _x_subword_count - 1:
+                                _flags &= ~ FormatFlags.QUOTES
                             else:
-                                xgood = False
-                                for xj in subwordlist[:xi]:
-                                    tmp_uc = ucategory(xj[0])
-                                    if tmp_uc == 'Lu' or tmp_uc == 'Ll' or tmp_uc == 'Nd':
-                                        xgood = True
+                                _xgood = False
+                                for _xj in x_subwordlist_t[:_xi]:
+                                    if _xj == 'A' or _xj == 'a' or _xj == '0':
+                                        _xgood = True
                                         break
-                                for xj in subwordlist[xi + 1:]:
-                                    tmp_uc = ucategory(xj[0])
-                                    if tmp_uc == 'Lu' or tmp_uc == 'Ll' or tmp_uc == 'Nd':
-                                        xgood = False
-                                        break
-                                if xgood:
-                                    newflags &= ~ FormatFlags.QUOTES
-                                    flags &= ~ FormatFlags.QUOTES
+                                # # or maybe let's be greedy with turning off
+                                #for _xj in x_subwordlist_t[_xi + 1:]:
+                                #    if _xj == 'A' or _xj == 'a' or _xj == '0':
+                                #        _xgood = False
+                                #        break
+                                if _xgood:
+                                    _next_flags &= ~ FormatFlags.QUOTES
+                                    _flags &= ~ FormatFlags.QUOTES
                         else:
                             # # quotes not set, check if we should set it
-                            if xi == 0:
+                            if _xi == 0:
                                 # # beginning of word = good to set
-                                newflags |= FormatFlags.QUOTES
+                                _next_flags |= FormatFlags.QUOTES
                             else:
                                 # # should have letters/nums after, none before
-                                xgood = False
-                                for xj in subwordlist[xi + 1:]:
-                                    tmp_uc = ucategory(xj[0])
-                                    if tmp_uc == 'Lu' or tmp_uc == 'Ll' or tmp_uc == 'Nd':
-                                        xgood = True
+                                _xgood = False
+                                for _xj in x_subwordlist_t[_xi + 1:]:
+                                    if _xj == 'A' or _xj == 'a' or _xj == '0':
+                                        _xgood = True
                                         break
-                                for xj in subwordlist[:xi]:
-                                    tmp_uc = ucategory(xj[0])
-                                    if tmp_uc == 'Lu' or tmp_uc == 'Ll' or tmp_uc == 'Nd':
-                                        xgood = False
+                                for _xj in x_subwordlist_t[:_xi]:
+                                    if _xj == 'A' or _xj == 'a' or _xj == '0':
+                                        _xgood = False
                                         break
-                                if xgood:
-                                    newflags &= ~ FormatFlags.QUOTES
-                    #########################
-                    elif tmpsubword == '*':
+                                if _xgood:
+                                    _next_flags &= ~ FormatFlags.QUOTES
+                    elif _tmp_subword == '*':
                         # # toggle BOLD?
-                        if flags & FormatFlags.BOLD:
+                        if _flags & FormatFlags.BOLD:
                             # # bold already set, check if we should unset it
-                            if xi == tmpsubwordlen - 1:
-                                flags &= ~ FormatFlags.BOLD
-                                newflags &= ~ FormatFlags.BOLD
-                                tmpweight = -1
+                            if _xi == _x_subword_count - 1:
+                                _flags &= ~ FormatFlags.BOLD
+                                _next_flags &= ~ FormatFlags.BOLD
+                                _tmp_subword_weight = -1
                             else:
-                                xgood = False
-                                for xj in subwordlist[:xi]:
-                                    tmp_uc = ucategory(xj[0])
-                                    if tmp_uc == 'Lu' or tmp_uc == 'Ll' or tmp_uc == 'Nd':
-                                        xgood = True
+                                _xgood = False
+                                for _xj in x_subwordlist_t[:_xi]:
+                                    if _xj == 'A' or _xj == 'a' or _xj == '0':
+                                        _xgood = True
                                         break
-                                for xj in subwordlist[xi + 1:]:
-                                    tmp_uc = ucategory(xj[0])
-                                    if tmp_uc == 'Lu' or tmp_uc == 'Ll' or tmp_uc == 'Nd':
-                                        xgood = False
-                                        break
-                                if xgood:
-                                    flags &= ~ FormatFlags.BOLD
-                                    newflags &= ~ FormatFlags.BOLD
-                                    tmpweight = -1
+                                # # or let's be greedy on turning off
+                                #for _xj in x_subwordlist_t[_xi + 1:]:
+                                #    if _xj == 'A' or _xj == 'a' or _xj == '0':
+                                #        _xgood = False
+                                #        break
+                                if _xgood:
+                                    _flags &= ~ FormatFlags.BOLD
+                                    _next_flags &= ~ FormatFlags.BOLD
+                                    _tmp_subword_weight = -1
                         else:
                             # # bold not set, check if we should set it
-                            if xi == 0:
+                            if _xi == 0:
                                 # # beginning of word = good to set
-                                flags |= FormatFlags.BOLD
-                                newflags |= FormatFlags.BOLD
-                                tmpweight = -1
+                                _flags |= FormatFlags.BOLD
+                                _next_flags |= FormatFlags.BOLD
+                                _tmp_subword_weight = -1
                             else:
                                 # # should have letters/nums after, none before
-                                xgood = False
-                                for xj in subwordlist[xi + 1:]:
-                                    tmp_uc = ucategory(xj[0])
-                                    if tmp_uc == 'Lu' or tmp_uc == 'Ll' or tmp_uc == 'Nd':
-                                        xgood = True
+                                _xgood = False
+                                for _xj in x_subwordlist_t[_xi + 1:]:
+                                    if _xj == 'A' or _xj == 'a' or _xj == '0':
+                                        _xgood = True
                                         break
-                                for xj in subwordlist[:xi]:
-                                    tmp_uc = ucategory(xj[0])
-                                    if tmp_uc == 'Lu' or tmp_uc == 'Ll' or tmp_uc == 'Nd':
-                                        xgood = False
+                                for _xj in x_subwordlist_t[:_xi]:
+                                    if _xj == 'A' or _xj == 'a' or _xj == '0':
+                                        _xgood = False
                                         break
-                                if xgood:
-                                    flags |= FormatFlags.BOLD
-                                    newflags |= FormatFlags.BOLD
-                                    tmpweight = -1
-                ###############################
-                    elif tmpsubword == '_':
-                        if flags & FormatFlags.ITALICS:
-                            # # bold already set, check if we should unset it
-                            if xi == tmpsubwordlen - 1:
-                                flags &= ~ FormatFlags.ITALICS
-                                newflags &= ~ FormatFlags.ITALICS
-                                tmpweight = -1
+                                if _xgood:
+                                    _flags |= FormatFlags.BOLD
+                                    _next_flags |= FormatFlags.BOLD
+                                    _tmp_subword_weight = -1
+                    elif _tmp_subword == '_':
+                        # # toggle ITALICS?
+                        if _flags & FormatFlags.ITALICS:
+                            logger.warning('ITALICS OFF? (%d,,%d)' % (x_subword_current_pos, _xi))
+                            # # italics already set, check if we should unset it
+                            if _xi == _x_subword_count - 1:
+                                _flags &= ~ FormatFlags.ITALICS
+                                _next_flags &= ~ FormatFlags.ITALICS
+                                _tmp_subword_weight = -1
                             else:
-                                xgood = False
-                                for xj in subwordlist[:xi]:
-                                    tmp_uc = ucategory(xj[0])
-                                    if tmp_uc == 'Lu' or tmp_uc == 'Ll' or tmp_uc == 'Nd':
-                                        xgood = True
+                                _xgood = False
+                                for _xj in x_subwordlist_t[:_xi]:
+                                    if _xj == 'A' or _xj == 'a' or _xj == '0':
+                                        _xgood = True
                                         break
-                                for xj in subwordlist[xi + 1:]:
-                                    tmp_uc = ucategory(xj[0])
-                                    if tmp_uc == 'Lu' or tmp_uc == 'Ll' or tmp_uc == 'Nd':
-                                        xgood = False
-                                        break
-                                if xgood:
-                                    flags &= ~ FormatFlags.ITALICS
-                                    newflags &= ~ FormatFlags.ITALICS
-                                    tmpweight = -1
+                                # # or let's be greedy on turning off
+                                #for _xj in x_subwordlist_t[_xi + 1:]:
+                                #    if _xj == 'A' or _xj == 'a' or _xj == '0':
+                                #        _xgood = False
+                                #        break
+                                if _xgood:
+                                    _flags &= ~ FormatFlags.ITALICS
+                                    _next_flags &= ~ FormatFlags.ITALICS
+                                    _tmp_subword_weight = -1
                         else:
-                            # # bold not set, check if we should set it
-                            if xi == 0:
+                            logger.warning('ITALICS OON? (%d,,%d)' % (x_subword_current_pos, _xi))
+                            # # italics not set, check if we should set it
+                            if _xi == 0:
                                 # # beginning of word = good to set
-                                flags |= FormatFlags.ITALICS
-                                newflags |= FormatFlags.ITALICS
-                                tmpweight = -1
+                                _flags |= FormatFlags.ITALICS
+                                _next_flags |= FormatFlags.ITALICS
+                                _tmp_subword_weight = -1
                             else:
                                 # # should have letters/nums after, none before
-                                xgood = False
-                                for xj in subwordlist[xi + 1:]:
-                                    tmp_uc = ucategory(xj[0])
-                                    if tmp_uc == 'Lu' or tmp_uc == 'Ll' or tmp_uc == 'Nd':
-                                        xgood = True
+                                _xgood = False
+                                for _xj in x_subwordlist_t[_xi + 1:]:
+                                    if _xj == 'A' or _xj == 'a' or _xj == '0':
+                                        _xgood = True
                                         break
-                                for xj in subwordlist[:xi]:
-                                    tmp_uc = ucategory(xj[0])
-                                    if tmp_uc == 'Lu' or tmp_uc == 'Ll' or tmp_uc == 'Nd':
-                                        xgood = False
+                                for _xj in x_subwordlist_t[:_xi]:
+                                    if _xj == 'A' or _xj == 'a' or _xj == '0':
+                                        _xgood = False
                                         break
-                                if xgood:
-                                    flags |= FormatFlags.ITALICS
-                                    newflags |= FormatFlags.ITALICS
-                                    tmpweight = -1
-
-                ###
-                ### char_pos, subword_len, word_index, subword_count, flags, weight
-                if tmpweight == -1:
-                    tmpflags = FormatFlags.IGNORE
-                    tmpweight = 0
-                elif tmpsubword[0] == '\n' or tmpsubword == '\r':
-                    if tmpsubword == self.newline:
-                        tmpflags = FormatFlags.SPECIAL
-                        # # if we wanted to reset all flags at a newline, we'd do it here
+                                if _xgood:
+                                    _flags |= FormatFlags.ITALICS
+                                    _next_flags |= FormatFlags.ITALICS
+                                    _tmp_subword_weight = -1
+                # # done parsing symbols
+                # #  let's do final cleanups/checks/flag-changes and add sub-word
+                # # char_pos, subword_len, word_index, subword_count, flags, weight
+                if _tmp_subword_weight == -1:
+                    _tmpflags = FormatFlags.IGNORE
+                    _tmp_subword_weight = 0
+                elif _tmp_subword_type == '\t':
+                    # # special type
+                    if _tmp_subword == self.newline or _tmp_subword == '\t':
+                        _tmpflags = FormatFlags.SPECIAL
+                        # # if we wanted to reset all flags at a special char, we'd do it here
                         #flags = 0
                     else:
-                        tmpflags = FormatFlags.IGNORE
-                elif tmpsubword == '\t':
-                    tmpflags = FormatFlags.SPECIAL
+                        _tmpflags = FormatFlags.IGNORE
                 else:
-                    tmpflags = flags
-                #logger.debug(
-                #    'pack subword: '
-                #    'subword_len:%d '
-                #    'weight:%d flags:%d' % (
-                #        tmpsubwordlen,
-                #        tmpweight,
-                #        tmpflags,
-                #    ))
-                if tmpsubwordlen > 255:
-                    logger.error('subword too long: %d: %d' % (subword_current_pos, tmpsubwordlen))
-                    tmpsubwordlen = 255
-                tmpweight = int(tmpweight)
-                if tmpweight > 255:
-                    logger.error('weight too big: %d: %d' % (subword_current_pos, tmpweight))
-                    tmpweight = 255
-                if tmpflags > 255:
-                    logger.error('flags be crazy: %d: %d' % (subword_current_pos, tmpflags))
-                tmpsubarr = self.subword_struct.pack(
-                    tmpsubwordlen,
-                    int(tmpweight),
-                    tmpflags,
-                )  ## asdf asdf asdf
-                self.subword_structs.extend(
-                    tmpsubarr
+                    _tmpflags = _flags
+                if _tmp_subword_len > 255:
+                    logger.error('subword too long: %d: %d' % \
+                                 (x_subword_current_pos, _tmp_subword_len))
+                    _tmp_subword_len = 255
+                _tmp_subword_weight = int(_tmp_subword_weight)
+                if _tmp_subword_weight > 255:
+                    logger.error('weight too big: %d: %d' % \
+                                 (x_subword_current_pos, _tmp_subword_weight))
+                    _tmp_subword_weight = 255
+                if _tmpflags > 255:
+                    logger.error('flags be crazy: %d: %d' % (x_subword_current_pos, _tmpflags))
+                # # make sub-word byte struct
+                _tmpsubarr = self.subword_struct.pack(
+                    _tmp_subword_len,
+                    _tmp_subword_weight,
+                    _tmpflags,
                 )
-                tmpcharpos += len(tmpsubword)
-                flags = newflags
+                # # add sub-word byte struct
+                self.subword_structs.extend(
+                    _tmpsubarr
+                )
+                # # get next_flags set for the next round
+                _flags = _next_flags
+            # # push values back outside the function
+            flags = _flags
+            x_subwordlist.clear()
+            x_subwordlist_t.clear()
+            x_subword_weights.clear()
+        # # END _add_word_list()
+        # ###################################
 
-        ############################## END SUB-DEF _add_to_words
-        ###########################################
         self._detect_encoding()
-        ## TODO: something with encoding...?
+        # # TODO: something with encoding...?
         self._get_newline()
-        subword_start_pos = 0
-        subword_current_pos = 0
-        re_init_pos = 0
-        re_offset = self.max_chunk_size
-        subwordlist = []
+        x_newline = self.newline
+        x_max_subword_len = self.conf.max_subword_len
+        x_subword_start_pos = 0
+        x_subword_current_pos = 0
+        x_re_init_pos = 0
+        x_re_offset = self.max_chunk_size
+        # # holds actual chunks of current word
+        x_subwordlist = []
+        # # holds representation of the type of a chunk of current word
+        # # A=upper, a=lower, .=punctuation, newline=newline
+        x_subwordlist_t = []
+        # # weights for each subword
+        x_subword_weights = []
         ## read ~100k chars at a time. makes memload smaller during parsing
-        while re_init_pos < len(self.text):
-            subtxt = self.text[re_init_pos:re_init_pos + re_offset]
+        while x_re_init_pos < len(self.text):
+            subtxt = self.text[x_re_init_pos:x_re_init_pos + x_re_offset]
             logger.debug('len subtxt: %d' % len(subtxt))
             #splitoutlist = re.split('(\W|\w{1,%d})' % self.conf.max_subword_len, subtxt)
-            splitoutlist = re.split('([^a-zA-Z0-9]|[0-9]{1,3}|[a-zA-Z]{1,%d})' % self.conf.max_subword_len, subtxt)
-            #logger.debug('len splitoutlist: %d' % len(splitoutlist))
+            splitoutlist = re.split('(\W|[0-9]+|[^\W_]+|.)', subtxt)
+            #splitoutlist = re.split('([0-9]+|[a-zA-Z]+|.)', subtxt)
             for tmpindex in range(len(splitoutlist)):
-                i = splitoutlist[tmpindex]
-                if not i:
+                subx = splitoutlist[tmpindex]
+                if not subx:
                     continue
-                #logger.debug('i: %s' % repr(i))
-                if not i:
+
+                cat = ucategory(subx[0])
+                if cat[0] == 'L':
+                    # # Letters: Lu=UPPERS, Ll=lowers, Lo=other (kanji,kana,etc)
+                    _tlen = len(subx)
+                    if _tlen > x_max_subword_len:
+                        # # longer than max subword len; break into smaller pieces
+                        tmp_l_list = []
+                        _tdivs = int(_tlen / x_max_subword_len)
+                        if _tlen % x_max_subword_len:
+                            _tdivs += 1
+                        _avgsz = int(_tlen / _tdivs)
+                        if _tlen % _tdivs:
+                            _avgsz += 1
+                        _tcpos = 0
+                        while _tcpos < _tlen - 1:
+                            tmp_l_list.append(subx[_tcpos: _tcpos+_avgsz])
+                            _tcpos += _avgsz
+                        logger.warning(repr(tmp_l_list))
+                    else:
+                        tmp_l_list = [subx,]
+                    for _t_sw in tmp_l_list:
+                        # # assess all the pieces of sub-string and add
+                        upper_count = 0
+                        other_count = 0
+                        _tweight = self.conf.weight_base
+                        for tmp_letter in _t_sw:
+                            tmp_cat = ucategory(tmp_letter)
+                            if tmp_cat == 'Ll':
+                                pass
+                            elif tmp_cat == 'Lu':
+                                upper_count += 1
+                            else:
+                                other_count += 1
+                        if upper_count == _tlen:
+                            upper_count = 1
+                        if other_count or upper_count:
+                            _tweight += upper_count * self.conf.weight_uppers
+                            _tweight += other_count * self.conf.weight_special
+                            x_subwordlist_t.append('A')
+                        else:
+                            x_subwordlist_t.append('a')
+                        _txtrachars = _tlen - self.conf.small_word_len
+                        if _txtrachars > 0:
+                            _tweight += _txtrachars * self.conf.weight_extra_char
+                        x_subword_weights.append(_tweight)
+                    x_subwordlist.extend(tmp_l_list)
+                elif cat == 'Nd':
+                    # # Numbers
+                    if len(subx) > 3:
+                        # # break it into chunks of 3 to be more readable
+                        # # since we want to break where commas *would* be,
+                        # #  we have to go right to left
+                        tmp_n_list = []
+                        _rpos = len(subx)
+                        _lpos = _rpos - 3
+                        while _rpos > 0:
+                            tmp_n_list.insert(0, subx[_lpos:_rpos])
+                            _rpos -= 3
+                            _lpos -= 3
+                            if _lpos < 0:
+                                _lpos = 0
+                            x_subword_weights.append(self.conf.weight_numbers)
+                        x_subwordlist.extend(tmp_n_list)
+                    else:
+                        x_subwordlist.append(subx)
+                        x_subwordlist_t.append('0')
+                        x_subword_weights.append(self.conf.weight_numbers)
+                elif cat[0] == 'P':
+                    # # punctuation: Ps=start "[{(", Pe=end "}])",
+                    # #              Pc=connector "_", Pd=dash "-", Po=other "@!$"
+                    x_subwordlist.append(subx)
+                    x_subwordlist_t.append('.')
+                    x_subword_weights.append(self.conf.weight_punctuation)
+                elif cat == 'Sm' or cat == 'Sc':
+                    # # symbols: Sm=math "^~+", Sc=currency"$"
+                    x_subwordlist.append(subx)
+                    x_subwordlist_t.append('.')
+                    x_subword_weights.append(self.conf.weight_punctuation)
+                    # # TODO: Sk is *just* backtick? "`"
+                elif cat == 'Zs':
+                    # # space
+                    logger.warning('space (%d,%d)' % (x_subword_start_pos, x_subword_current_pos))
+                    if x_subwordlist:
+                        _add_word_list()
+                    x_subword_current_pos += 1
+                    x_subword_start_pos = x_subword_current_pos
                     continue
-                elif i[0] == '\n' or i == '\r':
-                    if i == self.newline:
+                elif cat == 'Cc':
+                    # # control, includes newlines, tabs and unprintable binary
+                    if subx == self.newline:
                         ## add existing subword. make new word.
                         ## newline will show distinctly, ...
                         ## ...not as a continuation of the line before
-                            ## newline as distinct word
-                        if subwordlist:
+                        ## newline as distinct word
+                        if x_subwordlist:
                             ### process previous word seperately
-                            _add_to_words()
-                        subwordlist = [i]
-                        subword_start_pos = subword_current_pos
-                        _add_to_words()
-                        subword_current_pos += 1
-                        subword_start_pos = subword_current_pos
-                        subwordlist = []
+                            _add_word_list()
+                        x_subwordlist.append(subx)
+                        x_subwordlist_t.append('\t')
+                        x_subword_weights.append(self.conf.weight_special)
+                        x_subword_start_pos = x_subword_current_pos
+                        _add_word_list()
+                        x_subword_current_pos += 1
+                        x_subword_start_pos = x_subword_current_pos
                         continue
+                    elif subx == '\t':
+                        if x_subwordlist and x_subwordlist[-1] != '\t':
+                            _add_word_list()
+                        x_subwordlist.append(subx)
+                        x_subwordlist_t.append('\t')
+                        x_subword_weights.append(self.conf.weight_special)
                     else:
-                        ## ignore completely
-                        if subwordlist:
-                            _add_to_words()
-                        subwordlist = []
-                        subword_current_pos += 1
-                        subword_start_pos = subword_current_pos
-                        continue
-                elif i == '\t':
-                    if subwordlist and subwordlist[-1] == '\t':
-                        ## tabs attach together
-                        subwordlist.append(i)
-                    elif subwordlist:
-                        ## process wordlist. tab attaches to next word...
-                        _add_to_words()
-                        subword_start_pos = subword_current_pos
-                        subword_current_pos += 1
-                        continue
-                    else:
-                        subwordlist.append(i)
-                elif i == ' ':
-                    logger.debug('space at pos: %d' % subword_current_pos)
-                    if subwordlist:
-                        # # process wordlist. skip space.
-                        _add_to_words()
-                    subword_current_pos += 1
-                    subword_start_pos = subword_current_pos
-                    subwordlist = []
-                    continue
-                elif tmpindex + 1 == len(splitoutlist):
-                    subwordlist.append(i)
-                    _add_to_words()
-                else:
-                    subwordlist.append(i)
-                subword_current_pos += len(i)
+                        if x_subwordlist:
+                            _add_word_list()
+                        logger.warning('unrecognized characters (%d)' % x_subword_current_pos)
+                        x_subwordlist.clear()
+                        x_subword_current_pos += len(subx)
+                        x_subword_start_pos = x_subword_current_pos
+
+                x_subword_current_pos += len(subx)
             # # if full text is too big, get ready to read in more text
-            re_init_pos += re_offset
+            x_re_init_pos += x_re_offset
         # # finished loops of all text; get the straggler at the end of the whole text...
-        if subwordlist:
-            _add_to_words()
+        if x_subwordlist:
+            _add_word_list()
         #self.word_struct = word_struct
         #self.subword_struct = subword_struct
         #self.word_structs = word_structs
