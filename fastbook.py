@@ -99,12 +99,12 @@ ConfTuple = namedtuple('SubWord',
 DefaultConf = ConfTuple(
     max_subword_len=7,
     weight_base=8,  # #float/double: for normal words, per char
-    weight_special=5,  # #float/double: for abnormal words, per char
-    weight_uppers=6,  # #float/double: for each capital letter
-    weight_numbers=10,
-    weight_subwords=3,
+    weight_special=12,  # #float/double: for abnormal words, per char
+    weight_uppers=7,  # #float/double: for each capital letter
+    weight_numbers=12,
+    weight_subwords=4,
     weight_punctuation=4,
-    small_word_len=4,  # #uint: small words get same fast pace
+    small_word_len=3,  # #uint: small words get same fast pace
     weight_extra_char=1,  # #? uint
     speed_adjust=1,
 )
@@ -363,9 +363,6 @@ class Book():
             nonlocal x_subword_weights
             nonlocal x_subword_start_pos
             nonlocal x_subword_current_pos
-            logger.warning('add_word_list: %s\n\t%s\n\t%s\t(%d, %d)' % \
-                           (repr(x_subwordlist), repr(x_subwordlist_t), repr(x_subword_weights),
-                            x_subword_start_pos,x_subword_current_pos))
             _flags = flags
             _next_flags = _flags
             _x_subword_count = len(x_subwordlist)
@@ -400,9 +397,11 @@ class Book():
                     # # check/set flags based on symbols
                     if _tmp_subword == '"':
                         if _flags & FormatFlags.QUOTES:
+                            # # QUOTES ALREADY SET; check if we unset it
                             # # end-quotes must come after letters/nums
                             # # ...and should not have letters/nums after it
                             if _xi == _x_subword_count - 1:
+                                _next_flags &= ~ FormatFlags.QUOTES
                                 _flags &= ~ FormatFlags.QUOTES
                             else:
                                 _xgood = False
@@ -418,8 +417,8 @@ class Book():
                                 if _xgood:
                                     _next_flags &= ~ FormatFlags.QUOTES
                                     _flags &= ~ FormatFlags.QUOTES
-                        else:
-                            # # quotes not set, check if we should set it
+                        elif _x_subword_count > 1:
+                            # # QUOTES NOT YET SET, check if we should set it
                             if _xi == 0:
                                 # # beginning of word = good to set
                                 _next_flags |= FormatFlags.QUOTES
@@ -439,7 +438,7 @@ class Book():
                     elif _tmp_subword == '*':
                         # # toggle BOLD?
                         if _flags & FormatFlags.BOLD:
-                            # # bold already set, check if we should unset it
+                            # # BOLD ALREADY SET, check if we should unset it
                             if _xi == _x_subword_count - 1:
                                 _flags &= ~ FormatFlags.BOLD
                                 _next_flags &= ~ FormatFlags.BOLD
@@ -459,8 +458,8 @@ class Book():
                                     _flags &= ~ FormatFlags.BOLD
                                     _next_flags &= ~ FormatFlags.BOLD
                                     _tmp_subword_weight = -1
-                        else:
-                            # # bold not set, check if we should set it
+                        elif _x_subword_count > 1:
+                            # # BOLD NOT YET SET, check if we should set it
                             if _xi == 0:
                                 # # beginning of word = good to set
                                 _flags |= FormatFlags.BOLD
@@ -484,8 +483,7 @@ class Book():
                     elif _tmp_subword == '_':
                         # # toggle ITALICS?
                         if _flags & FormatFlags.ITALICS:
-                            logger.warning('ITALICS OFF? (%d,,%d)' % (x_subword_current_pos, _xi))
-                            # # italics already set, check if we should unset it
+                            # # ITALICS ALREADY SET, check if we should unset it
                             if _xi == _x_subword_count - 1:
                                 _flags &= ~ FormatFlags.ITALICS
                                 _next_flags &= ~ FormatFlags.ITALICS
@@ -505,9 +503,8 @@ class Book():
                                     _flags &= ~ FormatFlags.ITALICS
                                     _next_flags &= ~ FormatFlags.ITALICS
                                     _tmp_subword_weight = -1
-                        else:
-                            logger.warning('ITALICS OON? (%d,,%d)' % (x_subword_current_pos, _xi))
-                            # # italics not set, check if we should set it
+                        elif _x_subword_count > 1:
+                            # # ITALICS NOT YET SET, check if we should set it
                             if _xi == 0:
                                 # # beginning of word = good to set
                                 _flags |= FormatFlags.ITALICS
@@ -620,10 +617,10 @@ class Book():
                         while _tcpos < _tlen - 1:
                             tmp_l_list.append(subx[_tcpos: _tcpos+_avgsz])
                             _tcpos += _avgsz
-                        logger.warning(repr(tmp_l_list))
                     else:
                         tmp_l_list = [subx,]
-                    for _t_sw in tmp_l_list:
+                    for _ti in range(len(tmp_l_list)):
+                        _t_sw = tmp_l_list[_ti]
                         # # assess all the pieces of sub-string and add
                         upper_count = 0
                         other_count = 0
@@ -636,7 +633,8 @@ class Book():
                                 upper_count += 1
                             else:
                                 other_count += 1
-                        if upper_count == _tlen:
+                        if upper_count == len(_t_sw):
+                            # # all caps. treat it close to a normal word
                             upper_count = 1
                         if other_count or upper_count:
                             _tweight += upper_count * self.conf.weight_uppers
@@ -647,6 +645,8 @@ class Book():
                         _txtrachars = _tlen - self.conf.small_word_len
                         if _txtrachars > 0:
                             _tweight += _txtrachars * self.conf.weight_extra_char
+                        if _ti > 0:
+                            _tweight += self.conf.weight_subwords
                         x_subword_weights.append(_tweight)
                     x_subwordlist.extend(tmp_l_list)
                 elif cat == 'Nd':
@@ -660,11 +660,13 @@ class Book():
                         _lpos = _rpos - 3
                         while _rpos > 0:
                             tmp_n_list.insert(0, subx[_lpos:_rpos])
+                            x_subwordlist_t.append('0')
+                            x_subword_weights.append(self.conf.weight_numbers)
+                            # # shift left on the number
                             _rpos -= 3
                             _lpos -= 3
                             if _lpos < 0:
                                 _lpos = 0
-                            x_subword_weights.append(self.conf.weight_numbers)
                         x_subwordlist.extend(tmp_n_list)
                     else:
                         x_subwordlist.append(subx)
@@ -684,7 +686,6 @@ class Book():
                     # # TODO: Sk is *just* backtick? "`"
                 elif cat == 'Zs':
                     # # space
-                    logger.warning('space (%d,%d)' % (x_subword_start_pos, x_subword_current_pos))
                     if x_subwordlist:
                         _add_word_list()
                     x_subword_current_pos += 1
